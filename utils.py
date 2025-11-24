@@ -1,16 +1,15 @@
 # utils.py
 import math
+import time
 import numpy as np
-from config import CLICK_FRAMES, DRAG_START_FRAMES, EAR_THRESHOLD, BLINK_COOLDOWN
+from config import CLICK_FRAMES, DRAG_START_FRAMES, EAR_THRESHOLD, BLINK_COOLDOWN, ONE_EURO_MIN_CUTOFF, ONE_EURO_BETA
 
 def get_ear(landmarks, eye_indices):
     """Calculates Eye Aspect Ratio (EAR) to detect blinking."""
-    # Vertical distances
     p2_p6 = math.hypot(landmarks[eye_indices[1]].x - landmarks[eye_indices[15]].x,
                        landmarks[eye_indices[1]].y - landmarks[eye_indices[15]].y)
     p3_p5 = math.hypot(landmarks[eye_indices[2]].x - landmarks[eye_indices[14]].x,
                        landmarks[eye_indices[2]].y - landmarks[eye_indices[14]].y)
-    # Horizontal distance
     p1_p4 = math.hypot(landmarks[eye_indices[0]].x - landmarks[eye_indices[8]].x,
                        landmarks[eye_indices[0]].y - landmarks[eye_indices[8]].y)
     
@@ -26,7 +25,6 @@ class ActionTracker:
 
     def update(self, left_ear, right_ear):
         action = None
-        
         if self.cooldown > 0:
             self.cooldown -= 1
             return None
@@ -34,7 +32,7 @@ class ActionTracker:
         left_closed = left_ear < EAR_THRESHOLD
         right_closed = right_ear < EAR_THRESHOLD
 
-        # 1. IGNORE BOTH EYES CLOSED (Natural Blink / Safety)
+        # Safety: Both closed = Reset
         if left_closed and right_closed:
             self.left_closed_count = 0
             self.right_closed_count = 0
@@ -43,9 +41,8 @@ class ActionTracker:
                 return "STOP_DRAG"
             return None
 
-        # 2. STATE: IDLE
+        # State: IDLE
         if self.state == "IDLE":
-            # Check Left Eye
             if left_closed:
                 self.left_closed_count += 1
             else:
@@ -54,7 +51,6 @@ class ActionTracker:
                     self.cooldown = BLINK_COOLDOWN
                 self.left_closed_count = 0
 
-            # Check Right Eye
             if right_closed:
                 self.right_closed_count += 1
             else:
@@ -63,7 +59,6 @@ class ActionTracker:
                     self.cooldown = BLINK_COOLDOWN
                 self.right_closed_count = 0
             
-            # Check Drag Start
             if self.left_closed_count >= DRAG_START_FRAMES:
                 self.state = "DRAGGING"
                 return "START_DRAG_LEFT"
@@ -71,9 +66,8 @@ class ActionTracker:
                 self.state = "DRAGGING"
                 return "START_DRAG_RIGHT"
 
-        # 3. STATE: DRAGGING
+        # State: DRAGGING
         elif self.state == "DRAGGING":
-            # Stop dragging if the controlling eye opens
             if self.left_closed_count > 0 and not left_closed:
                 self.state = "IDLE"
                 self.left_closed_count = 0
@@ -86,19 +80,63 @@ class ActionTracker:
         return action
 
 class StableSmoother:
-    """Simple Weighted Moving Average for cursor smoothing."""
-    def __init__(self, alpha=0.5):
-        self.alpha = alpha
-        self.prev_x = 0
-        self.prev_y = 0
+    """One Euro Filter implementation for adaptive smoothing."""
+    def __init__(self, min_cutoff=ONE_EURO_MIN_CUTOFF, beta=ONE_EURO_BETA):
+        self.min_cutoff = min_cutoff
+        self.beta = beta
+        self.x_prev = None
+        self.y_prev = None
+        self.dx_prev = 0.0
+        self.dy_prev = 0.0
+        self.t_prev = None
+
+    def smoothing_factor(self, t_e, cutoff):
+        r = 2 * math.pi * cutoff * t_e
+        return r / (r + 1)
+
+    def exponential_smoothing(self, a, x, x_prev):
+        return a * x + (1 - a) * x_prev
 
     def smooth(self, x, y):
-        if self.prev_x == 0 and self.prev_y == 0:
-            self.prev_x, self.prev_y = x, y
+        t_curr = time.time()
+        
+        if self.x_prev is None:
+            self.x_prev = x
+            self.y_prev = y
+            self.t_prev = t_curr
             return x, y
+
+        t_e = t_curr - self.t_prev
         
-        smooth_x = self.alpha * self.prev_x + (1 - self.alpha) * x
-        smooth_y = self.alpha * self.prev_y + (1 - self.alpha) * y
-        
-        self.prev_x, self.prev_y = smooth_x, smooth_y
-        return smooth_x, smooth_y
+        # Avoid division by zero
+        if t_e <= 0: return self.x_prev, self.y_prev
+
+        # 1. Calculate the derivative (speed)
+        dx = (x - self.x_prev) / t_e
+        dy = (y - self.y_prev) / t_e
+
+        # 2. Smooth the derivative
+        a_d = self.smoothing_factor(t_e, 1.0) # 1Hz default for derivative
+        dx_hat = self.exponential_smoothing(a_d, dx, self.dx_prev)
+        dy_hat = self.exponential_smoothing(a_d, dy, self.dy_prev)
+
+        # 3. Calculate dynamic cutoff based on speed
+        # If speed is high, cutoff is high (less smoothing)
+        cutoff_x = self.min_cutoff + self.beta * abs(dx_hat)
+        cutoff_y = self.min_cutoff + self.beta * abs(dy_hat)
+
+        # 4. Smooth the signal using dynamic cutoff
+        a_x = self.smoothing_factor(t_e, cutoff_x)
+        a_y = self.smoothing_factor(t_e, cutoff_y)
+
+        x_hat = self.exponential_smoothing(a_x, x, self.x_prev)
+        y_hat = self.exponential_smoothing(a_y, y, self.y_prev)
+
+        # Update previous values
+        self.x_prev = x_hat
+        self.y_prev = y_hat
+        self.dx_prev = dx_hat
+        self.dy_prev = dy_hat
+        self.t_prev = t_curr
+
+        return x_hat, y_hat

@@ -1,5 +1,4 @@
 # config.py
-
 import pyautogui
 
 # Screen Dimensions
@@ -14,16 +13,14 @@ RIGHT_EYE = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 
 LEFT_IRIS = [474, 475, 476, 477]
 RIGHT_IRIS = [469, 470, 471, 472]
 
-# Thresholds
+# Blink & Action Thresholds
 EAR_THRESHOLD = 0.22        # Eye Aspect Ratio to consider eye closed
-CLICK_FRAMES = 2            # Frames to register a click (fast blink)
-DRAG_START_FRAMES = 12      # Frames to register a drag (long hold)
-BLINK_COOLDOWN = 5          # Frames to wait before registering another action
+CLICK_FRAMES = 2            # Frames to register a click
+DRAG_START_FRAMES = 12      # Frames to register a drag
+BLINK_COOLDOWN = 5          # Frames to wait between actions
 
-# Smoothing (0.0 = no smoothing, 0.9 = very slow/smooth)
-SMOOTHING_FACTOR = 0.6 
-
-# Calibration / Sensitivity
-# Adjust these to map the eye movement range to the screen
-# Higher = more sensitive, Lower = requires more eye movement
-SENSITIVITY = 2.5
+# --- NEW: ONE EURO FILTER SETTINGS ---
+# MIN_CUTOFF: Lower = more smoothing (steadier cursor), but more lag.
+# BETA: Higher = less lag when moving fast.
+ONE_EURO_MIN_CUTOFF = 0.01  
+ONE_EURO_BETA = 1.5
