@@ -1,7 +1,7 @@
-# main.py
 import cv2
 import mediapipe as mp
-from config import SCREEN_WIDTH, SCREEN_HEIGHT, LEFT_EYE, RIGHT_EYE, SMOOTHING_FACTOR
+# REMOVED 'SMOOTHING_FACTOR' from this list below
+from config import SCREEN_WIDTH, SCREEN_HEIGHT, LEFT_EYE, RIGHT_EYE
 from gaze_tracker import GazeTracker
 from mouse_controller import MouseController
 from utils import get_ear, ActionTracker, StableSmoother
@@ -26,7 +26,9 @@ def main():
     gaze_tracker = GazeTracker()
     mouse = MouseController(SCREEN_WIDTH, SCREEN_HEIGHT)
     action_tracker = ActionTracker()
-    smoother = StableSmoother(alpha=SMOOTHING_FACTOR)
+    
+    # NEW: Initialize One Euro Filter (uses defaults from config automatically)
+    smoother = StableSmoother()
 
     print("--- Gaze Mouse Started ---")
     print("Commands:")
@@ -68,10 +70,9 @@ def main():
                 mouse.release_left()
 
             # --- 2. Gaze Tracking ---
-            # If dragging, use the OPEN eye for tracking. Otherwise use BOTH.
             track_mode = 'both'
             if action_tracker.state == "DRAGGING":
-                if action_tracker.left_closed_count > 0: # Left is closed/holding
+                if action_tracker.left_closed_count > 0:
                     track_mode = 'right'
                 else:
                     track_mode = 'left'
@@ -82,18 +83,15 @@ def main():
             smooth_x, smooth_y = smoother.smooth(target_x, target_y)
             mouse.move(smooth_x, smooth_y)
 
-            # --- 4. Visual Feedback (Optional) ---
-            # Draw eye landmarks for debug
+            # --- 4. Visual Feedback ---
             for id in LEFT_EYE + RIGHT_EYE:
                 lx, ly = int(landmarks[id].x * frame.shape[1]), int(landmarks[id].y * frame.shape[0])
                 cv2.circle(frame, (lx, ly), 1, (0, 255, 0), -1)
 
-        # Display
         cv2.imshow('Gaze Mouse', frame)
-        if cv2.waitKey(1) & 0xFF == 27: # ESC to quit
+        if cv2.waitKey(1) & 0xFF == 27:
             break
 
-    # Cleanup
     cap.release()
     cv2.destroyAllWindows()
     face_mesh.close()
