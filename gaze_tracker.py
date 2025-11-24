@@ -18,34 +18,51 @@ class GazeTracker:
             avg_pos = ((left_pos[0] + right_pos[0]) / 2, (left_pos[1] + right_pos[1]) / 2)
 
         # Apply sensitivity and centering
-        # We assume center of eye is 0.5, 0.5. We subtract 0.5, scale, and add 0.5 back.
+        # We subtract 0.5 to center it, scale it, and add 0.5 back
         gaze_x = 0.5 + (avg_pos[0] - 0.5) * SENSITIVITY
         gaze_y = 0.5 + (avg_pos[1] - 0.5) * SENSITIVITY
 
-        # Clamp values to screen edges
+        # Clamp values to ensure it stays on screen
         return max(0.0, min(1.0, gaze_x)), max(0.0, min(1.0, gaze_y))
 
     def _get_iris_pos(self, landmarks, eye_indices, iris_indices):
-        """Calculates iris position relative to eye width/height."""
+        """Calculates iris position relative to rigid eye landmarks."""
         
-        # Eye corners (Inner and Outer)
-        # For Left Eye: 362 (inner), 263 (outer) - Simplified approximation
-        # Using 0 and 8 index from our config list corresponding to corners
-        p_left = np.array([landmarks[eye_indices[0]].x, landmarks[eye_indices[0]].y])
-        p_right = np.array([landmarks[eye_indices[8]].x, landmarks[eye_indices[8]].y])
-        
-        # Iris Center
+        # 1. Get the Iris Center (The actual eyeball)
         iris_center = np.mean([[landmarks[i].x, landmarks[i].y] for i in iris_indices], axis=0)
 
-        # Eye Width and Height Vectors
-        eye_width = np.linalg.norm(p_right - p_left)
+        # 2. Get Rigid Reference Points (Corners)
+        # 0 = inner corner, 8 = outer corner in our config lists
+        p_inner = np.array([landmarks[eye_indices[0]].x, landmarks[eye_indices[0]].y])
+        p_outer = np.array([landmarks[eye_indices[8]].x, landmarks[eye_indices[8]].y])
         
-        # Center of the eye span
-        eye_center = (p_left + p_right) / 2.0
+        # 3. Get Eyelid Reference Points (Top and Bottom)
+        # 12 = center of top lid, 4 = center of bottom lid in our config lists
+        p_top = np.array([landmarks[eye_indices[12]].x, landmarks[eye_indices[12]].y])
+        p_bottom = np.array([landmarks[eye_indices[4]].x, landmarks[eye_indices[4]].y])
 
-        # Calculate relative position (0.5 is center)
-        # Note: This is a simplified projection for 2D screens
-        rel_x = 0.5 + (iris_center[0] - eye_center[0]) / eye_width
-        rel_y = 0.5 + (iris_center[1] - eye_center[1]) / (eye_width * 0.3) # Height is approx 30% of width
+        # --- HORIZONTAL CALCULATION (X) ---
+        # Distance from inner corner to outer corner
+        eye_width = np.linalg.norm(p_outer - p_inner)
+        if eye_width == 0: return 0.5, 0.5
+        
+        # Project iris center onto the line connecting corners
+        # Simple projection: how far is the iris along the width?
+        # (This vector math projects the iris position onto the horizontal axis)
+        eye_vec = p_outer - p_inner
+        iris_vec = iris_center - p_inner
+        # Dot product / magnitude gives projection
+        proj_x = np.dot(iris_vec, eye_vec) / (eye_width * eye_width)
 
-        return rel_x, rel_y
+        # --- VERTICAL CALCULATION (Y) ---
+        # Instead of generic height, use distance from Top Eyelid vs Bottom Eyelid
+        dist_top = np.linalg.norm(iris_center - p_top)
+        dist_bottom = np.linalg.norm(iris_center - p_bottom)
+        total_height = dist_top + dist_bottom
+
+        if total_height == 0: return 0.5, 0.5
+        
+        # Normalized Y (0.0 = top, 1.0 = bottom)
+        rel_y = dist_top / total_height
+
+        return proj_x, rel_y
