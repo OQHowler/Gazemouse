@@ -19,7 +19,12 @@ CLICK_FRAMES = 2            # Frames to register a click
 DRAG_START_FRAMES = 12      # Frames to register a drag
 BLINK_COOLDOWN = 5          # Frames to wait between actions
 
-# --- NEW: ONE EURO FILTER SETTINGS ---
+# Calibration / Sensitivity
+# Adjust these to map the eye movement range to the screen
+# Higher = more sensitive, Lower = requires more eye movement
+SENSITIVITY = 2.0  
+
+# --- ONE EURO FILTER SETTINGS (Jitter Reduction) ---
 # MIN_CUTOFF: Lower = more smoothing (steadier cursor), but more lag.
 # BETA: Higher = less lag when moving fast.
 ONE_EURO_MIN_CUTOFF = 0.01  
