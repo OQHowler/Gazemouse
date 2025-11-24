@@ -1,19 +1,15 @@
 import cv2
 import mediapipe as mp
-# REMOVED 'SMOOTHING_FACTOR' from this list below
 from config import SCREEN_WIDTH, SCREEN_HEIGHT, LEFT_EYE, RIGHT_EYE
 from gaze_tracker import GazeTracker
 from mouse_controller import MouseController
 from utils import get_ear, ActionTracker, StableSmoother
+# NEW IMPORT
+from calibration import CalibrationManager
 
 def main():
-    # 1. Setup Camera
     cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Error: Camera not found.")
-        return
-
-    # 2. Setup MediaPipe
+    
     mp_face_mesh = mp.solutions.face_mesh
     face_mesh = mp_face_mesh.FaceMesh(
         max_num_faces=1,
@@ -22,75 +18,78 @@ def main():
         min_tracking_confidence=0.5
     )
 
-    # 3. Initialize Components
     gaze_tracker = GazeTracker()
     mouse = MouseController(SCREEN_WIDTH, SCREEN_HEIGHT)
     action_tracker = ActionTracker()
-    
-    # NEW: Initialize One Euro Filter (uses defaults from config automatically)
     smoother = StableSmoother()
+    # NEW: Initialize Calibration
+    calib_manager = CalibrationManager()
 
     print("--- Gaze Mouse Started ---")
-    print("Commands:")
-    print(" - Left Wink: Left Click")
-    print(" - Right Wink: Right Click")
-    print(" - Hold One Eye Closed: Drag Mode")
-    print(" - Close Both Eyes: Reset/Safety")
-    print(" - Press ESC to Quit")
+    print("Press 'c' to start Calibration.")
+    print("Press 'SPACE' to capture a calibration point.")
+    print("Press 'ESC' to Quit.")
 
     while True:
         success, frame = cap.read()
         if not success: break
 
-        # Preprocessing
-        frame = cv2.flip(frame, 1) # Mirror view
+        frame = cv2.flip(frame, 1)
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = face_mesh.process(rgb_frame)
 
         if results.multi_face_landmarks:
             landmarks = results.multi_face_landmarks[0].landmark
 
-            # --- 1. Action Detection ---
-            left_ear = get_ear(landmarks, LEFT_EYE)
-            right_ear = get_ear(landmarks, RIGHT_EYE)
-            
-            action = action_tracker.update(left_ear, right_ear)
-            
-            if action == "LEFT_CLICK":
-                print("Left Click")
-                mouse.left_click()
-            elif action == "RIGHT_CLICK":
-                print("Right Click")
-                mouse.right_click()
-            elif action == "START_DRAG_LEFT" or action == "START_DRAG_RIGHT":
-                print("Start Drag")
-                mouse.press_left()
-            elif action == "STOP_DRAG":
-                print("Stop Drag")
-                mouse.release_left()
+            # 1. Get Raw Gaze (0.0 to 1.0)
+            raw_x, raw_y = gaze_tracker.calculate_gaze(landmarks, mode='both')
 
-            # --- 2. Gaze Tracking ---
-            track_mode = 'both'
-            if action_tracker.state == "DRAGGING":
-                if action_tracker.left_closed_count > 0:
-                    track_mode = 'right'
-                else:
-                    track_mode = 'left'
+            # --- CALIBRATION MODE ---
+            if calib_manager.active:
+                calib_manager.store_sample(raw_x, raw_y)
+                frame = calib_manager.draw_ui(frame)
             
-            target_x, target_y = gaze_tracker.calculate_gaze(landmarks, mode=track_mode)
-            
-            # --- 3. Smoothing & Move ---
-            smooth_x, smooth_y = smoother.smooth(target_x, target_y)
-            mouse.move(smooth_x, smooth_y)
+            # --- MOUSE MODE ---
+            else:
+                # 2. Apply Calibration Mapping (New Step!)
+                # Converts raw eye math to specific screen pixels
+                screen_x, screen_y = calib_manager.map_gaze(raw_x, raw_y)
 
-            # --- 4. Visual Feedback ---
+                # 3. Action Detection
+                left_ear = get_ear(landmarks, LEFT_EYE)
+                right_ear = get_ear(landmarks, RIGHT_EYE)
+                action = action_tracker.update(left_ear, right_ear)
+                
+                if action == "LEFT_CLICK": mouse.left_click()
+                elif action == "RIGHT_CLICK": mouse.right_click()
+                elif action == "START_DRAG_LEFT": mouse.press_left()
+                elif action == "STOP_DRAG": mouse.release_left()
+
+                # 4. Smoothing & Move
+                # Note: We smooth the SCREEN coordinates now, not the raw ones
+                smooth_x, smooth_y = smoother.smooth(screen_x, screen_y)
+                
+                # We normalize back to 0-1 for the mouse controller if needed, 
+                # or update mouse_controller to take pixels. 
+                # Let's adjust inputs to mouse.move to be normalized for safety:
+                norm_x = smooth_x / SCREEN_WIDTH
+                norm_y = smooth_y / SCREEN_HEIGHT
+                mouse.move(norm_x, norm_y)
+
+            # Debug circles
             for id in LEFT_EYE + RIGHT_EYE:
                 lx, ly = int(landmarks[id].x * frame.shape[1]), int(landmarks[id].y * frame.shape[0])
                 cv2.circle(frame, (lx, ly), 1, (0, 255, 0), -1)
 
         cv2.imshow('Gaze Mouse', frame)
-        if cv2.waitKey(1) & 0xFF == 27:
+        
+        key = cv2.waitKey(1) & 0xFF
+        if key == 27: # ESC
             break
+        elif key == ord('c'): # Start Calibration
+            calib_manager.start_calibration()
+        elif key == 32: # SPACE (Next Point)
+            calib_manager.next_point()
 
     cap.release()
     cv2.destroyAllWindows()
